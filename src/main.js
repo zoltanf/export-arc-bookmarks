@@ -93,11 +93,8 @@ const processItem = (id, items) => {
   }
 
   // --- Case 2: It's a BOOKMARK (has tab data) ---
-  // Use optional chaining (?.) for safety
   if (item.data?.tab) {
-    // Use nullish coalescing (??) to provide default values
     const url = item.data.tab.savedURL ?? "#";
-    // Use the URL as a fallback title if the real title is missing
     const title = escapeHTML(item.data.tab.savedTitle || url);
     return `<DT><A HREF="${url}">${title}</A></DT>`;
   }
@@ -107,7 +104,7 @@ const processItem = (id, items) => {
     return `<DT><H3>${escapeHTML(item.title)}</H3>\n<DL><p></DL><p>`;
   }
 
-  return ""; // Fallback for separators or other unknown items
+  return "";
 };
 
 // Function to find the container with items and spaces
@@ -129,7 +126,6 @@ const convertToBookmarkFormat = (sidebar) => {
   let topAppsResult = "";
   if (topAppsId) {
       const topAppsItem = items.find(item => item.id === topAppsId);
-      // Ensure it has children before creating the folder
       if (topAppsItem?.childrenIds?.length > 0) {
           const childrenHtml = topAppsItem.childrenIds.map(childId => processItem(childId, items)).join('\n');
           topAppsResult = `<DT><H3>Top Apps</H3>\n<DL><p>\n${childrenHtml}\n</DL><p>`;
@@ -140,31 +136,29 @@ const convertToBookmarkFormat = (sidebar) => {
   const pinnedBookmarksResult = spaces
     .filter((spaceItem) => spaceItem.containerIDs && spaceItem.title)
     .map((spaceItem) => {
-      // **FIX**: More robust way to find the pinned container ID
       const pinnedIndex = spaceItem.containerIDs.indexOf("pinned");
       if(pinnedIndex === -1 || pinnedIndex >= spaceItem.containerIDs.length -1) {
           return "";
       }
       const pinnedContainerId = spaceItem.containerIDs[pinnedIndex + 1];
-
-      // Let processItem handle the "Pinned bookmarks" folder and its children
       const pinnedContent = processItem(pinnedContainerId, items);
 
-      // Skip this space if it has no pinned content
       if (!pinnedContent) return "";
       
-      // Wrap the content of the entire space
       return `<DT><H3>${escapeHTML(spaceItem.title)} - Space</H3><DL><p>${pinnedContent}</DL><p>`;
     })
     .join("");
 
   const result = topAppsResult + pinnedBookmarksResult;
 
+  // *** BUG FIX ***: The entire list of bookmarks and folders must be wrapped 
+  // in a single top-level <DL> list. This was the missing piece.
   return `
     <!DOCTYPE NETSCAPE-Bookmark-file-1>
         <HTML>
         <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
         <Title>Arc Bookmarks</Title>
+        <H1>Bookmarks</H1>
         <DL><p>
         ${result}
         </DL><p>
