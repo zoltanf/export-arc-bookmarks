@@ -49,10 +49,106 @@ const translations = {
   },
 };
 
-const escapeHTML = (str) => {
-    if (!str) return "";
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+// --- STAGE 1A: PARSE A SINGLE ITEM FROM THE JSON INTO A CLEAN NODE ---
+function buildNode(itemId, allItems) {
+    const item = allItems.get(itemId);
+    if (!item) return null;
+
+    const node = {};
+    const hasChildren = item.childrenIds && item.childrenIds.length > 0;
+
+    if (hasChildren) {
+        node.type = 'folder';
+        node.title = item.title || 'Folder';
+        node.children = item.childrenIds
+            .map(childId => buildNode(childId, allItems))
+            .filter(Boolean); // Remove any null children
+    } else if (item.data?.tab) {
+        node.type = 'bookmark';
+        node.url = item.data.tab.savedURL;
+        node.title = item.data.tab.savedTitle || node.url; // Use URL as fallback title
+    } else if (item.title) { // Handle folders that are empty
+        node.type = 'folder';
+        node.title = item.title;
+        node.children = [];
+    } else {
+        return null; // Ignore items that are not folders or bookmarks
+    }
+
+    return node;
 }
+
+// --- STAGE 1B: RENDER A CLEAN NODE INTO HTML ---
+function renderNodeToHtml(node) {
+    const escapeHTML = (str) => str ? String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : '';
+    const title = escapeHTML(node.title);
+
+    if (node.type === 'folder') {
+        const childrenHtml = node.children.map(renderNodeToHtml).join('\n');
+        return `<DT><H3>${title}</H3>\n<DL><p>\n${childrenHtml}\n</DL><p>`;
+    }
+    if (node.type === 'bookmark') {
+        return `<DT><A HREF="${node.url ?? '#'}">${title}</A></DT>`;
+    }
+    return '';
+}
+
+// --- MAIN CONVERSION FUNCTION USING THE NEW 2-STAGE PROCESS ---
+const convertToBookmarkFormat = (sidebar) => {
+    const container = sidebar?.containers?.find(c => c.items && c.spaces);
+    if (!container) {
+        console.error("Could not find a valid container in the JSON file.");
+        return "";
+    }
+
+    // Create a Map for efficient O(1) lookups instead of slow O(n) .find() calls
+    const itemsMap = new Map(container.items.map(item => [item.id, item]));
+
+    // This will be the single root of our clean bookmark tree.
+    const rootNode = { type: 'folder', title: 'Arc Bookmarks', children: [] };
+
+    // Process "Top Apps"
+    const topAppsId = container.topAppsContainerIDs?.find(id => typeof id === 'string');
+    if (topAppsId) {
+        const topAppsNode = buildNode(topAppsId, itemsMap);
+        if (topAppsNode && topAppsNode.children.length > 0) {
+            topAppsNode.title = "Top Apps"; // Give it a proper name
+            rootNode.children.push(topAppsNode);
+        }
+    }
+
+    // Process each "Space"
+    container.spaces.forEach(space => {
+        if (!space.containerIDs || !space.title) return;
+
+        const pinnedIndex = space.containerIDs.indexOf("pinned");
+        if (pinnedIndex === -1 || pinnedIndex + 1 >= space.containerIDs.length) return;
+
+        const pinnedContainerId = space.containerIDs[pinnedIndex + 1];
+        const pinnedNode = buildNode(pinnedContainerId, itemsMap);
+        
+        if (pinnedNode && pinnedNode.children.length > 0) {
+             const spaceNode = {
+                type: 'folder',
+                title: `${space.title} - Space`,
+                children: [pinnedNode] // The "Pinned Bookmarks" folder goes inside the Space folder
+            };
+            rootNode.children.push(spaceNode);
+        }
+    });
+
+    // Render the entire clean tree into the final HTML structure
+    const finalHtml = renderNodeToHtml(rootNode);
+
+    return `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<Title>Bookmarks</Title>
+<H1>Bookmarks</H1>
+${finalHtml}`;
+};
+
+
+// --- UI and file handling logic (unchanged) ---
 
 function loadLanguage(userLanguage) {
   const translation = translations[userLanguage] || translations.en;
@@ -75,97 +171,6 @@ const translate = (key) => (translations[currentLanguage] || translations.en)[ke
 window.addEventListener("load", function () {
   loadLanguage("en");
 });
-
-const processItem = (id, items) => {
-  const item = items.find((item) => item.id === id);
-  if (!item) {
-    return "";
-  }
-
-  if (item.childrenIds && item.childrenIds.length > 0) {
-    const title = escapeHTML(item.title || "Folder");
-    const childrenHtml = item.childrenIds
-      .map((childId) => processItem(childId, items))
-      .join("\n");
-    return `<DT><H3>${title}</H3>\n<DL><p>\n${childrenHtml}\n</DL><p>`;
-  }
-
-  if (item.data?.tab) {
-    const url = item.data.tab.savedURL ?? "#";
-    const title = escapeHTML(item.data.tab.savedTitle || url);
-    return `<DT><A HREF="${url}">${title}</A></DT>`;
-  }
-  
-  if(item.title) {
-    return `<DT><H3>${escapeHTML(item.title)}</H3>\n<DL><p></DL><p>`;
-  }
-
-  return "";
-};
-
-const findContainerWithItemsAndSpaces = (containers) => {
-  return containers?.find((container) => container.items && container.spaces);
-};
-
-const convertToBookmarkFormat = (sidebar) => {
-  const container = findContainerWithItemsAndSpaces(sidebar?.containers);
-  if (!container) {
-    console.error("No container found with items and spaces");
-    return "";
-  }
-
-  const { topAppsContainerIDs, spaces, items } = container;
-
-  const topAppsId = topAppsContainerIDs?.find((id) => typeof id === "string");
-  let topAppsResult = "";
-  if (topAppsId) {
-      const topAppsItem = items.find(item => item.id === topAppsId);
-      if (topAppsItem?.childrenIds?.length > 0) {
-          const childrenHtml = topAppsItem.childrenIds.map(childId => processItem(childId, items)).join('\n');
-          topAppsResult = `<DT><H3>Top Apps</H3>\n<DL><p>\n${childrenHtml}\n</DL><p>`;
-      }
-  }
-
-  const pinnedBookmarksResult = spaces
-    .filter((spaceItem) => spaceItem.containerIDs && spaceItem.title)
-    .map((spaceItem) => {
-      const pinnedIndex = spaceItem.containerIDs.indexOf("pinned");
-      if(pinnedIndex === -1 || pinnedIndex >= spaceItem.containerIDs.length -1) {
-          return "";
-      }
-      const pinnedContainerId = spaceItem.containerIDs[pinnedIndex + 1];
-      const pinnedContent = processItem(pinnedContainerId, items);
-
-      if (!pinnedContent) return "";
-      
-      return `<DT><H3>${escapeHTML(spaceItem.title)} - Space</H3><DL><p>${pinnedContent}</DL><p>`;
-    })
-    .join("");
-
-  const allContent = topAppsResult + pinnedBookmarksResult;
-
-  // *** FINAL BUG FIX ***
-  // The entire collection of bookmarks must be nested inside a single top-level folder.
-  // This creates the unified structure that browser importers expect.
-  const finalHtml = `
-    <DT><H3>Arc Bookmarks</H3>
-    <DL><p>
-        ${allContent}
-    </DL><p>
-  `;
-
-  return `
-    <!DOCTYPE NETSCAPE-Bookmark-file-1>
-        <HTML>
-        <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
-        <Title>Bookmarks</Title>
-        <H1>Bookmarks</H1>
-        <DL><p>
-        ${finalHtml}
-        </DL><p>
-        </HTML>
-    `;
-};
 
 const download = (filename, text) => {
   const element = document.createElement("a");
