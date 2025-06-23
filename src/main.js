@@ -49,7 +49,6 @@ const translations = {
   },
 };
 
-// --- Helper function to escape HTML entities in titles ---
 const escapeHTML = (str) => {
     if (!str) return "";
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -83,7 +82,6 @@ const processItem = (id, items) => {
     return "";
   }
 
-  // --- Case 1: It's a FOLDER (has children) ---
   if (item.childrenIds && item.childrenIds.length > 0) {
     const title = escapeHTML(item.title || "Folder");
     const childrenHtml = item.childrenIds
@@ -92,14 +90,12 @@ const processItem = (id, items) => {
     return `<DT><H3>${title}</H3>\n<DL><p>\n${childrenHtml}\n</DL><p>`;
   }
 
-  // --- Case 2: It's a BOOKMARK (has tab data) ---
   if (item.data?.tab) {
     const url = item.data.tab.savedURL ?? "#";
     const title = escapeHTML(item.data.tab.savedTitle || url);
     return `<DT><A HREF="${url}">${title}</A></DT>`;
   }
   
-  // --- Case 3: It might be an empty folder that still needs to be rendered ---
   if(item.title) {
     return `<DT><H3>${escapeHTML(item.title)}</H3>\n<DL><p></DL><p>`;
   }
@@ -107,7 +103,6 @@ const processItem = (id, items) => {
   return "";
 };
 
-// Function to find the container with items and spaces
 const findContainerWithItemsAndSpaces = (containers) => {
   return containers?.find((container) => container.items && container.spaces);
 };
@@ -121,7 +116,6 @@ const convertToBookmarkFormat = (sidebar) => {
 
   const { topAppsContainerIDs, spaces, items } = container;
 
-  // --- Process Top Apps ---
   const topAppsId = topAppsContainerIDs?.find((id) => typeof id === "string");
   let topAppsResult = "";
   if (topAppsId) {
@@ -132,7 +126,6 @@ const convertToBookmarkFormat = (sidebar) => {
       }
   }
 
-  // --- Process Pinned Bookmarks in Spaces ---
   const pinnedBookmarksResult = spaces
     .filter((spaceItem) => spaceItem.containerIDs && spaceItem.title)
     .map((spaceItem) => {
@@ -149,18 +142,26 @@ const convertToBookmarkFormat = (sidebar) => {
     })
     .join("");
 
-  const result = topAppsResult + pinnedBookmarksResult;
+  const allContent = topAppsResult + pinnedBookmarksResult;
 
-  // *** BUG FIX ***: The entire list of bookmarks and folders must be wrapped 
-  // in a single top-level <DL> list. This was the missing piece.
+  // *** FINAL BUG FIX ***
+  // The entire collection of bookmarks must be nested inside a single top-level folder.
+  // This creates the unified structure that browser importers expect.
+  const finalHtml = `
+    <DT><H3>Arc Bookmarks</H3>
+    <DL><p>
+        ${allContent}
+    </DL><p>
+  `;
+
   return `
     <!DOCTYPE NETSCAPE-Bookmark-file-1>
         <HTML>
         <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
-        <Title>Arc Bookmarks</Title>
+        <Title>Bookmarks</Title>
         <H1>Bookmarks</H1>
         <DL><p>
-        ${result}
+        ${finalHtml}
         </DL><p>
         </HTML>
     `;
